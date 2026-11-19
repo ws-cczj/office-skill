@@ -118,6 +118,8 @@ class DeckCheckTests(unittest.TestCase):
             ('研究方案修订版', '研究方案修订版'),
             ('工作记录 · 修订版', '· 修订版'),
             ('工作记录 · 修订版，待核对', '· 修订版'),
+            ('工作记录 | 修订版, 待核对', '| 修订版'),
+            ('工作记录｜修订版；待核对', '｜修订版'),
         ]
         for text, fragment in examples:
             with self.subTest(text=text):
@@ -148,6 +150,8 @@ class DeckCheckTests(unittest.TestCase):
             '试件按测试规范修订版制作。',
             '参见实验规范（修订版）。',
             '使用软件修订版和最新求解器版本。',
+            '报告|章',
+            '报告+节',
             '来源：Li 等（2024），原图 4，CC BY 4.0。',
             '来源：机构技术报告，DOI: 10.1000/182。',
             '依据：实验报告与研究报告。',
@@ -213,6 +217,7 @@ class DeckCheckTests(unittest.TestCase):
                     self.assertEqual(result.returncode, exit_code, result.stderr or result.stdout)
                     report = json.loads(result.stdout)
                     self.assertEqual(report['quality_verdict'], 'not_assessed')
+                    self.assertIn('不验收论证', report['quality_scope'])
                     self.assertTrue({'internal_copy_literals', 'third_person_pov',
                                      'internal_copy_in_script', 'third_person_pov_in_script'} <= set(report['checks']))
                     found = [(i['code'], i['page'], i.get('object'), i['matched']) for i in report['issues']]
