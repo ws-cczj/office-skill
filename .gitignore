@@ -1,0 +1,22 @@
+# 每次运行的用户资料、素材、预览和交付物
+/runs/
+/output/
+/assets-cache/
+
+# 仅本地使用的模板分析器、输入资料与学习记录
+/template-analyzer/
+
+# 风格包的本机参考截图；规则和元数据仍可正常纳入版本管理
+/resources/**/local/
+
+# 本地环境
+.env
+.env.*
+!.env.example
+.venv/
+.runtime/
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

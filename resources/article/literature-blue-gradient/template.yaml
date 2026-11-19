@@ -1,0 +1,28 @@
+schema_version: 1
+id: article/literature-blue-gradient
+name: 蓝白渐变·文献证据卡片
+version: "0.2.0"
+status: validating
+scenario: article
+use_cases: [论文精读, 文献汇报, 组会汇报]
+description: 蓝白连续渐变、编号页头与文献证据卡片
+aspect_ratio: "16:9"
+mode: rules
+preview: null
+style: style.md
+source: null
+sample: null
+learning: learning.md
+page_types: [literature-overview, background-evidence, evidence-comparison]
+fonts: [Microsoft YaHei]
+editable: []
+limitations:
+  - 截图归纳规则，比例与替代字体是实施起点，非原始参数测量
+  - 已试制完整开题稿；标准论文精读的概览 B 与跨材料适配待验证
+  - 未提供当前版本验证样例和正式预览，不能标记 ready
+provenance:
+  origin: 用户提供的风格截图；资源包只登记通用布局与占位规则
+  usage: 依风格规则和学习记录进行指定测试
+validation:
+  version: null
+  report: validation.md

@@ -1,0 +1,30 @@
+schema_version: 1
+id: article/proposal-navy-navigation
+name: 藏蓝导航·研究方案论证
+version: "0.5.0"
+status: ready
+scenario: article
+use_cases: [开题汇报, 研究方案, 课题论证]
+description: 可编辑的藏蓝导航、正文组件和 18 个开题版式示例
+aspect_ratio: "16:9"
+mode: source
+preview: preview.png
+style: style.md
+source: template.pptx
+sample: null
+maintenance: maintenance.md
+learning: learning.md
+page_types: [agenda, background-argument, research-significance, evidence-comparison, objectives-tasks, roadmap, research-argument, converging-inputs, radial-methods, materials-diagram, technique-innovation, work-results-grid, work-multipanel, work-evidence-summary, feasibility, timeline, references, closing]
+fonts: [Microsoft YaHei, Arial]
+editable: [text, shapes, lines, picture-slots, gantt-bars]
+limitations:
+  - 导航为逐页对象，栏目增减、换序和高亮需要手动调整
+  - 图槽为形状占位，甘特条带为可移动形状
+  - 目录、双栏图文和结束页以缩略图为依据；参考文献页为通用扩展
+  - 长章名需按栏宽手动断行并检查中英文间距；英文副标题适合近距离查看
+provenance:
+  origin: 用户提供的参考图及经独立验收的双语占位模板
+  usage: 依源模板、风格规则与学习记录复用空内容版式
+validation:
+  version: "0.5.0"
+  report: validation.md
