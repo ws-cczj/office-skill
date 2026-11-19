@@ -23,14 +23,45 @@ IMAGE_LABEL = re.compile(
 )
 MONTH = re.compile(r'(?<!\d)(20\d{2})\s*[./年–-]\s*(0?[1-9]|1[0-2])(?!\d)')
 SCRIPT_HEADING = re.compile(r'^##\s+(?:第\s*)?(\d+)(?:页)?\s*[｜|]\s*.+$', re.M)
+INTERNAL_REPORT = (
+    r'(?:本次\s*(?:开题\s*)?|原(?:始)?\s*(?:开题\s*)?|开题\s*|本课题\s*|'
+    r'(?:随附|所附)(?:的)?\s*|该\s*)报告'
+)
+# Report names and literature attribution are valid academic content.
+BARE_REPORT = r'(?<!实验)(?<!试验)(?<!技术)(?<!研究)(?<!文献)(?<!评估)(?<!调研)(?<!年度)报告'
+SOURCE_REPORT = rf'(?:{INTERNAL_REPORT}|{BARE_REPORT})'
+SECTION = r'§\s*\d+(?:[.．]\d+)*'
+REPORT_MARKER = (rf'(?:(?:第\s*)?(?:{SECTION}|[图表式]\s*(?:[（(]\s*\d+\s*[）)]|\d+)'
+                 r'|\d+(?:[.．]\d+)+|(?:\d+|[一二三四五六七八九十百零〇两]+)\s*[章节])|修订版)')
 INTERNAL_COPY = re.compile(
-    r'^(?:依据|来源|出处|引用来源)\s*[：:]\s*(?:据\s*)?'
-    r'(?:(?:原始|本次|用户提供的)\s*)?(?:(?:开题\s*)?报告|Word)(?![a-z])'
-    r'|^(?:原始|本次|开题)?\s*报告\s*第?\s*(?:[§图表]\s*\d|\d+(?:\.\d+)+)'
-    r'|^(?:制作说明|绘制说明|素材路径|验收记录|导图检查|执行\s*Prompt)\s*[：:]'
+    r'(?:依据|来源|出处)\s*[：:]\s*(?:(?:据|参见|见|摘自|来自|取自)\s*)?'
+    rf'(?:[^，。；！？、\r\n《》]{{0,24}}?{INTERNAL_REPORT}(?:\s*{REPORT_MARKER})?'
+    rf'|(?:用户提供的|项目|本次|原始)?\s*(?:报告(?!了|\s*(?:规范|标准|格式))'
+    rf'(?:\s*{REPORT_MARKER})?|Word(?![a-z])(?:\s*文档)?)|{SECTION})'
+    rf'|{SOURCE_REPORT}\s*{REPORT_MARKER}'
+    rf'|^[ \t]*{SECTION}[ \t]*$'
+    rf'|编号\s*沿用\s*{SOURCE_REPORT}'
+    r'|(?:制作说明|绘制说明|素材路径|验收记录|导图检查|执行\s*Prompt)\s*[：:]'
+    r'|按\s*(?:本次|原)\s*(?:(?:汇报|报告|要求)\s*)?重绘'
+    r'|(?:流向|颜色|线条|箭头)\s*(?:仅\s*)?为[^，。；！？\r\n]{0,12}?示意(?!图)'
+    r'|示意\s*用[^，。；！？\r\n]{1,10}?表示'
+    # Recognize presentation version labels without rejecting revised standards or instruments.
+    r'|(?:本次|当前|内部|交付|演示文稿|PPTX?|幻灯片|汇报(?:稿)?|源稿|工作稿|'
+    r'研究计划|(?:研究|验证|实施)?方案|验证方法|技术路线|进度(?:表)?)\s*'
+    r'(?:修订版|[（(【\[]\s*修订版\s*[）)】\]])'
+    r'|^[ \t]*修订版[ \t]*$|[·｜|][ \t]*修订版(?=[ \t]*(?:$|[。；;，,]))'
+    r'|[·｜|]\s*修订版(?=[ \t]*(?:$|[。；;，,]))'
     r'|(?<![\w])(?:[A-Z]:[\\/]|/(?:home|mnt/data)/)[^\s]+',
     re.I | re.M,
 )
+THIRD_PERSON_POV = re.compile(
+    rf'(?:[左右上下]\s*)?图(?:片)?\s*(?:是|为)\s*{SOURCE_REPORT}\s*提供的'
+    rf'|{SOURCE_REPORT}\s*(?:[中里]\s*)?(?:记载|列出|提供|指出|给出|说明|提到|所述|写明)'
+    rf'|(?:(?:进度|时间(?:安排)?)\s*)?按\s*{SOURCE_REPORT}'
+    r'(?!\s*(?:标准|规范|格式|要求|重绘))(?:\s*修订版)?',
+)
+INTERNAL_COPY_CHECK = INTERNAL_COPY, 'internal_copy', '含源稿定位、制作自注、内部版本字样或本机路径。'
+THIRD_PERSON_CHECK = THIRD_PERSON_POV, 'third_person_pov', '以审阅口吻转述自身材料，请改为汇报人视角。'
 
 
 def paragraphs(element):
@@ -57,10 +88,11 @@ class Shape:
     box: tuple | None
     fill: str | None
     text: str
+    children: tuple['Shape', ...] = ()
 
 
-def shapes(slide):
-    for obj in slide.find('p:cSld/p:spTree', NS):
+def shapes(tree):
+    for obj in tree:
         props = obj.find('./*/p:cNvPr', NS)
         if props is None or props.get('hidden') in {'true', '1'}:
             continue
@@ -72,8 +104,10 @@ def shapes(slide):
             if offset is not None and extent is not None:
                 box = tuple(int(num) for num in (offset.get('x'), offset.get('y'), extent.get('cx'), extent.get('cy')))
         fill = obj.find('p:spPr/a:solidFill/a:srgbClr', NS)
-        yield Shape(props.get('name', ''), obj.tag.rsplit('}', 1)[-1],
-                    box, fill.get('val') if fill is not None else None, paragraphs(obj))
+        kind = obj.tag.rsplit('}', 1)[-1]
+        children = tuple(shapes(obj)) if kind == 'grpSp' else ()
+        text = '\n'.join(child.text for child in children) if kind == 'grpSp' else paragraphs(obj)
+        yield Shape(props.get('name', ''), kind, box, fill.get('val') if fill is not None else None, text, children)
 
 
 def read_deck(path):
@@ -96,19 +130,40 @@ def read_deck(path):
                     notes = '\n'.join(paragraphs(s) for s in node.findall('./p:cSld/p:spTree/p:sp', NS)
                                       if s.find('./p:nvSpPr/p:nvPr/p:ph[@type="body"]', NS) is not None)
                     break
-            slides.append((list(shapes(slide)), notes))
+            slides.append((list(shapes(slide.find('p:cSld/p:spTree', NS))), notes))
     return slides
 
 
-def internal_copy_findings(slides):
+def text_findings(text, check, location, *, preamble=False, **fields):
+    pattern, code, message = check
+    for match in pattern.finditer(text):
+        issue = {'code': f'{code}_{location}', 'matched': match[0], 'message': message, **fields}
+        if preamble:
+            issue['line'] = text.count('\n', 0, match.start()) + 1
+        yield issue
+
+
+def visible_text_shapes(objects):
+    for shape in objects:
+        if shape.kind == 'grpSp':
+            yield from visible_text_shapes(shape.children)
+        elif shape.text:
+            yield shape
+
+
+def deck_text_findings(slides, check):
     for page, (objects, notes) in enumerate(slides, 1):
-        for shape in objects:
-            if INTERNAL_COPY.search(shape.text.strip()):
-                yield {'code': 'internal_copy_on_slide', 'page': page, 'object': shape.name,
-                       'message': '正文对象含报告定位、制作说明或本机路径，核对其是否应留在工作稿。'}
-        if INTERNAL_COPY.search(notes.strip()):
-            yield {'code': 'internal_copy_in_notes', 'page': page,
-                   'message': '备注含报告定位、制作说明或本机路径，核对其是否属于现场口述。'}
+        for shape in visible_text_shapes(objects):
+            yield from text_findings(shape.text, check, 'on_slide', page=page, object=shape.name)
+        yield from text_findings(notes, check, 'in_notes', page=page)
+
+
+def internal_copy_findings(slides):
+    return deck_text_findings(slides, INTERNAL_COPY_CHECK)
+
+
+def third_person_pov_findings(slides):
+    return deck_text_findings(slides, THIRD_PERSON_CHECK)
 
 
 def inside(outer, inner):
@@ -188,6 +243,14 @@ def check_script(slides, path):
         return
     text = path.read_text(encoding='utf-8-sig')
     headings = list(SCRIPT_HEADING.finditer(text))
+    preamble = text[:headings[0].start()] if headings else text
+    checks = (INTERNAL_COPY_CHECK, THIRD_PERSON_CHECK)
+    for check in checks:
+        yield from text_findings(preamble, check, 'in_script', preamble=True)
+    for i, heading in enumerate(headings, 1):
+        end = headings[i].start() if i < len(headings) else len(text)
+        for check in checks:
+            yield from text_findings(text[heading.start():end], check, 'in_script', page=int(heading[1]))
     if [int(m[1]) for m in headings] != list(range(1, len(slides)+1)):
         yield {'code': 'speaker_script_page_order', 'message': '按实际页序使用 ## 01｜标题，并为每页写一段口述。'}
         return
@@ -252,6 +315,11 @@ def main():
                         help='如 3-12。输出正文对象概况，并提示三页以上重复的无媒体大容器；需要人工看图裁定。')
     parser.add_argument('--output', type=Path, help='将同样的 JSON 写入 UTF-8 文件')
     args = parser.parse_args()
+    inputs = (args.pptx, args.source_template, args.speaker_script)
+    if args.output and any(args.output.resolve() == path.resolve() or
+                           (args.output.is_file() and path.is_file() and args.output.samefile(path))
+                           for path in inputs if path):
+        parser.error('--output 必须与 PPTX、源模板及独立发言稿路径不同')
     report = {'file': str(args.pptx.resolve()), 'checks': [], 'issues': [],
               'quality_verdict': 'not_assessed',
               'quality_scope': '只核对已列文件条件与可选布局风险，不验收论证、技术图有效性、风格或整体美感。'}
@@ -259,8 +327,9 @@ def main():
         report['sha256'] = sha256(args.pptx.read_bytes()).hexdigest()
         slides = read_deck(args.pptx)
         report['slides'] = len(slides)
-        report['checks'].extend(['pptx_page_structure', 'internal_copy_literals'])
+        report['checks'].extend(['pptx_page_structure', 'internal_copy_literals', 'third_person_pov'])
         report['issues'].extend(internal_copy_findings(slides))
+        report['issues'].extend(third_person_pov_findings(slides))
         if args.source_template:
             report['checks'].append('retained_figure_slots')
             report['issues'].extend(empty_figure_slots(slides, read_deck(args.source_template)))
@@ -269,7 +338,7 @@ def main():
             if issue := check_timeline(slides, end):
                 report['issues'].append(issue)
         if args.speaker_script:
-            report['checks'].append('speaker_script_and_notes')
+            report['checks'].extend(['speaker_script_and_notes', 'internal_copy_in_script', 'third_person_pov_in_script'])
             report['issues'].extend(check_script(slides, args.speaker_script))
         if args.content_pages is not None:
             with ZipFile(args.pptx) as package:
