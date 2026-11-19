@@ -28,11 +28,15 @@ INTERNAL_REPORT = (
     r'(?:随附|所附)(?:的)?\s*|该\s*)报告'
 )
 # Report names and literature attribution are valid academic content.
-BARE_REPORT = r'(?<!实验)(?<!试验)(?<!技术)(?<!研究)(?<!文献)(?<!评估)(?<!调研)(?<!年度)报告'
+BARE_REPORT = (
+    r'(?<!实验)(?<!试验)(?<!技术)(?<!研究)(?<!文献)(?<!评估)(?<!调研)(?<!年度)'
+    r'(?<!检测)(?<!检验)(?<!调查)(?<!临床)(?<!监测)报告'
+)
 SOURCE_REPORT = rf'(?:{INTERNAL_REPORT}|{BARE_REPORT})'
 SECTION = r'§\s*\d+(?:[.．]\d+)*'
 REPORT_MARKER = (rf'(?:(?:第\s*)?(?:{SECTION}|[图表式]\s*(?:[（(]\s*\d+\s*[）)]|\d+)'
                  r'|\d+(?:[.．]\d+)+|(?:\d+|[一二三四五六七八九十百零〇两]+)\s*[章节])|修订版)')
+REDRAW = r'重(?:新\s*)?绘(?:制)?'
 INTERNAL_COPY = re.compile(
     r'(?:依据|来源|出处)\s*[：:]\s*(?:(?:据|参见|见|摘自|来自|取自)\s*)?'
     rf'(?:[^，。；！？、\r\n《》]{{0,24}}?{INTERNAL_REPORT}(?:\s*{REPORT_MARKER})?'
@@ -42,15 +46,17 @@ INTERNAL_COPY = re.compile(
     rf'|^[ \t]*{SECTION}[ \t]*$'
     rf'|编号\s*沿用\s*{SOURCE_REPORT}'
     r'|(?:制作说明|绘制说明|素材路径|验收记录|导图检查|执行\s*Prompt)\s*[：:]'
-    r'|按\s*(?:本次|原)\s*(?:(?:汇报|报告|要求)\s*)?重绘'
-    r'|(?:流向|颜色|线条|箭头)\s*(?:仅\s*)?为[^，。；！？\r\n]{0,12}?示意(?!图)'
+    rf'|按\s*(?:本次|原)\s*(?:(?:汇报|报告|要求)\s*)?{REDRAW}'
+    r'|(?:流向|颜色|线条|箭头)[ \t]*(?:'
+    r'仅[ \t]*为[^，,。；;！？!?\r\n]{0,12}?'
+    r'|为[^，,。；;！？!?\r\n]{0,10}?(?:符号|核算|概念)[^，,。；;！？!?\r\n]{0,6}?'
+    r'|仅[ \t]*作[ \t]*)示意(?!图)'
     r'|示意\s*用[^，。；！？\r\n]{1,10}?表示'
     # Recognize presentation version labels without rejecting revised standards or instruments.
     r'|(?:本次|当前|内部|交付|演示文稿|PPTX?|幻灯片|汇报(?:稿)?|源稿|工作稿|'
     r'研究计划|(?:研究|验证|实施)?方案|验证方法|技术路线|进度(?:表)?)\s*'
     r'(?:修订版|[（(【\[]\s*修订版\s*[）)】\]])'
     r'|^[ \t]*修订版[ \t]*$|[·｜|][ \t]*修订版(?=[ \t]*(?:$|[。；;，,]))'
-    r'|[·｜|]\s*修订版(?=[ \t]*(?:$|[。；;，,]))'
     r'|(?<![\w])(?:[A-Z]:[\\/]|/(?:home|mnt/data)/)[^\s]+',
     re.I | re.M,
 )
@@ -58,7 +64,7 @@ THIRD_PERSON_POV = re.compile(
     rf'(?:[左右上下]\s*)?图(?:片)?\s*(?:是|为)\s*{SOURCE_REPORT}\s*提供的'
     rf'|{SOURCE_REPORT}\s*(?:[中里]\s*)?(?:记载|列出|提供|指出|给出|说明|提到|所述|写明)'
     rf'|(?:(?:进度|时间(?:安排)?)\s*)?按\s*{SOURCE_REPORT}'
-    r'(?!\s*(?:标准|规范|格式|要求|重绘))(?:\s*修订版)?',
+    rf'(?!\s*(?:标准|规范|格式|要求|{REDRAW}))(?:\s*修订版)?',
 )
 INTERNAL_COPY_CHECK = INTERNAL_COPY, 'internal_copy', '含源稿定位、制作自注、内部版本字样或本机路径。'
 THIRD_PERSON_CHECK = THIRD_PERSON_POV, 'third_person_pov', '以审阅口吻转述自身材料，请改为汇报人视角。'
