@@ -25,6 +25,8 @@ python skills/excel/scripts/excel.py probe
 
 PowerPoint `inspect` 检查依赖。各入口的 `probe` 或 Visio `status` 连接真实桌面应用。工作文件按 [跨应用协作契约](references/cross-app-workflow.md) 放入受 Git 忽略的 `runs/<run-id>/`。
 
+固定任务可直接使用 [可复用办公流程](references/reusable-workflows.md)，只填本次参数就能填写 PPT 模板、绘制 Visio 流程、排版 Word 或生成 Excel 汇总。修改时沿用同一运行目录和工作稿。
+
 ## 维护
 
 从仓库根目录运行各子 Skill 的回归。Word 和 Excel 测试需要相应桌面应用，MathType 用例需要 MathType 7 和 Word Commands 插件。按应用依次运行以共用同一桌面锁。

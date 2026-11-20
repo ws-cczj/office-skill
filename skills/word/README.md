@@ -14,11 +14,13 @@ python skills/word/scripts/check_doc.py runs/demo/word/paper.docx
 
 `inspect` 只检查环境。`probe` 实际连接 Word 并报告 MathType OLE 注册和插件加载状态。真正能否转换以本次公式生成和保存重开为准。
 
+固定的 SCI 排版可以直接用 [可复用 Word 流程](../../references/reusable-workflows.md#word-sci-稿件)。
+
 ## 编排 SCI 稿件
 
 优先使用给定期刊的文档模板及其作者指南。`configure.profile: "sci"` 提供 Times New Roman、正文 12 磅双倍行距和基础标题层级。纸张、页边距、分栏和样式覆盖按本次期刊要求设置。使用模板的样式时直接提供样式名，按需启用通用设置。
 
-`run` 接收 UTF-8 JSON。必填 `schema_version: 1` 与新建的绝对 `target` 路径。可选绝对 `source`（已保存 DOCX）或 `template`（DOTX），以及 `operations`、`snapshot: {"text":true}` 和 `exports`。每项 PDF 导出用绝对 `path`，可同时指定 `first_page`、`last_page`。已有目标会被拒绝。先在临时工作副本中完成操作、保存重开和导出，再发布目标。
+`run` 接收 UTF-8 JSON。必填 `schema_version: 1` 与新建的绝对 `target` 路径。可选绝对 `source`（已保存 DOCX）或 `template`（DOTX），以及 `operations`、`snapshot: {"text":true}` 和 `exports`。每项 PDF 导出用绝对 `path`，可同时指定 `first_page`、`last_page`。新建目标已存在时拒绝覆盖。后续修订可传 `update:true` 及原工作稿 `target`，省略 `source` 和 `template`。保存重开与导出验证完成后，更新同一路径的工作稿和指定导出。每个批次至多复用一个隐藏、未落盘的 MathType 转换文档。
 
 操作按顺序执行。先确定页面与样式，再放置公式。以下是计划的 `operations` 示例。
 

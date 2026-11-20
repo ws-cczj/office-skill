@@ -180,6 +180,7 @@ class NativeLifecycleTests(unittest.TestCase):
                     'operations': [{'op': 'add_slide'}, {'op': 'add_slide'}]}
             api = MagicMock()
             api.app.Version = 'test'
+            api.foreground_operations = []
             api.execute.side_effect = [{'slide_id': 1}, RuntimeError('interrupted')]
             with patch('skills.ppt.scripts.ppt_native.PowerPoint', return_value=api):
                 result = run_plan(plan, path/'report.json', lambda: None)

@@ -5,7 +5,7 @@ description: 按交付物路由 Windows 桌面 Office 任务。用于 PowerPoint
 
 # Office Skill
 
-按当前交付物只读取对应入口。用于制作的输入格式不改变路由，例如用 Word 报告制作 PPT 时只加载 PowerPoint。
+先读 [仓库协作规范](AGENTS.md) 中的单机运行与文件管理，再按当前交付物读取对应入口。用于制作的输入格式不改变路由，例如用 Word 报告制作 PPT 时只加载 PowerPoint。
 
 | 交付物 | 子 Skill |
 | --- | --- |

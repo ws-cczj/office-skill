@@ -4,7 +4,7 @@
 
 ## 运行与探测
 
-需要 Windows、已安装并可自动化的 Microsoft PowerPoint、Python 3.10+ 和 pywin32。执行以下命令时先切到 skill 根目录，或使用脚本绝对路径。
+需要 Windows、已安装并可自动化的 Microsoft PowerPoint、Python 3.10+ 和 pywin32。执行以下命令时先切到仓库根目录，或使用脚本绝对路径。
 
 ```powershell
 python skills/ppt/scripts/powerpoint.py inspect
@@ -44,10 +44,14 @@ python skills/ppt/scripts/powerpoint.py run --plan C:/work/office-skill/runs/dem
 ```
 
 - `create` 存在时，新建目标且拒绝覆盖已有文件。复用模板改用 `{"template":"源文件绝对路径","slides":[2,6,16]}`。省略 `slides` 保留全部源页；选择可换序，不能重复，复制用 `duplicate_slide`。模板复制保持文件扩展名，支持 `.pptx/.pptm/.potx/.potm`，格式转换可用下述脚本扩展。源文件不会被编辑。
-- 修改本次已有副本时省略 `create`。`save` 默认为 true，结束时显式保存。`reopen` 保存后重开，再写 `verify_snapshot` 并导出 `verify_export`，用于确认最终版本。`close` 默认为 false。已打开文稿需要重开或关闭时，显式设置 `close_existing:true`，只影响这个完整路径的目标。
+- 修改本次已有副本时省略 `create`。`save` 默认为 true，结束时显式保存。`reopen` 保存后重开，再写 `verify_snapshot` 并导出 `verify_export`，用于确认最终版本。可用 `verify_pages` 限定本次受影响的页。`close` 默认为 false，成品批次宜设为 true。已打开文稿需要重开或关闭时，显式设置 `close_existing:true`，只影响这个完整路径的目标。
 - 路径必须绝对。`box` 为 `[左,上,宽,高]`，单位 pt；宽高必须为正。页号从 1 开始，可按本次内容调整画幅。
 - 页面选择器可用整数页号或 `{"index":1}`、`{"id":实际SlideID}`、`{"name":"页面名称"}`、`{"tag":"页面标签"}`。对象选择器可用名称字符串或 `{"id":实际ID}`、`{"name":"名称"}`、`{"tag":"标签"}`。标签忽略大小写，名称精确匹配。歧义匹配停止执行。重排后优先使用 ID 或标签。
 - 新对象需要页内唯一 `name`，同时写入 `PPTSKILL` 标签；分组内也可定位。新页指定 `name` 时同时写页面名称和标签。复制页另定标签，不传名称时清掉继承的页面标签，复制得到的对象 ID 用新快照回读。
+
+常规新建、打开和重开使用隐藏窗口。新建原生图表时自动启用文稿窗口，更新现有图表数据时先尝试后台激活。扩展脚本依赖窗口时，在其 `script` 操作内给出 `requires_window:true`。用户要求显示目标时可传 `show:true`。后台支持范围以保存重开的实测为准。
+
+经常填同类模板时可使用 [可复用模板流程](../../../references/reusable-workflows.md#powerpoint-模板填充)。
 
 ## 操作与字段
 

@@ -1,6 +1,6 @@
 """Run a Word or Excel plan in a private desktop COM instance."""
 import argparse
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from importlib.util import find_spec
 import json
 import os
@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import sys
 from tempfile import TemporaryDirectory
+import time
 
 from core.desktop_lock import DesktopLock
 
@@ -30,18 +31,19 @@ def existing(value, suffixes=()):
 
 
 @contextmanager
-def office(adapter):
+def office(adapter, *, acquire_lock=True):
     import pythoncom
     from win32com.client import DispatchEx
     from win32com.client.dynamic import CDispatch
 
-    with DesktopLock():
+    with (DesktopLock() if acquire_lock else nullcontext()):
         pythoncom.CoInitialize()
         app = None
         try:
             app = DispatchEx(adapter.PROG_ID)
             if isinstance(app, CDispatch):
                 app._FlagAsMethod('Quit')
+            app.Visible = False
             app.DisplayAlerts = 0
             app.AutomationSecurity = 3  # Disable macros in files opened by automation.
             yield app
@@ -63,33 +65,67 @@ def document(adapter, app, path, readonly):
         adapter.close(doc)
 
 
-def staging_path(stack, destination):
+def stage(stack, workspaces, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
-    work = Path(stack.enter_context(TemporaryDirectory(prefix='.office-', dir=destination.parent)))
-    return work / destination.name
+    device = destination.parent.stat().st_dev
+    if device not in workspaces:
+        workspaces[device] = Path(stack.enter_context(
+            TemporaryDirectory(prefix='.office-', dir=destination.parent)
+        ))
+    workspace = workspaces[device]
+    folder = workspace / str(sum(1 for _ in workspace.iterdir()))
+    folder.mkdir()
+    return folder / destination.name
 
 
-def publish(pairs):
+def file_state(path):
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return None
+    if not path.is_file():
+        raise ValueError(f'Expected a file path: {path}')
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+
+def publish(pairs, expected):
     published = []
     try:
-        for temporary, destination in pairs:
-            # On Windows rename within the volume is atomic and refuses an existing destination.
-            temporary.rename(destination)
-            published.append(destination)
-    except OSError:
-        for destination in reversed(published):
-            destination.unlink()
+        for index, (temporary, destination) in enumerate(pairs):
+            before = expected[destination]
+            if file_state(destination) != before:
+                raise RuntimeError(f'Output changed while Office was working: {destination}')
+            backup = None
+            if before is not None:
+                # The document is published last. Only replaced exports need rollback data.
+                if index < len(pairs) - 1:
+                    backup = temporary.parent / '.previous'
+                    shutil.copy2(destination, backup)
+                temporary.replace(destination)
+            else:
+                temporary.rename(destination)  # On Windows this cannot overwrite another file.
+            published.append((destination, backup))
+    except (OSError, RuntimeError, ValueError):
+        for destination, backup in reversed(published):
+            if backup is None:
+                destination.unlink()
+            else:
+                backup.replace(destination)
         raise
 
 
 def run_plan(adapter, plan, plan_path):
+    started = time.perf_counter()
     if plan.get('schema_version') != 1:
         raise ValueError('schema_version must be 1')
     target = absolute(plan['target'], {adapter.EXTENSION})
+    update = plan.get('update', False)
+    if type(update) is not bool:
+        raise ValueError('update must be a boolean')
     source = existing(plan['source'], {adapter.EXTENSION}) if 'source' in plan else None
     template = adapter.template_path(plan['template']) if 'template' in plan else None
-    if source and template:
-        raise ValueError('Choose source or template')
+    if (source and template) or (update and (source or template)):
+        raise ValueError('Choose source, template or update')
     operations = plan.get('operations', [])
     adapter.validate(operations)
     exports = [(adapter.export_path(spec), spec) for spec in plan.get('exports', [])]
@@ -97,12 +133,19 @@ def run_plan(adapter, plan, plan_path):
     if len(destinations) != len(set(destinations)) or set(destinations) & {source, template, plan_path}:
         raise ValueError('Output paths must be unique and distinct from inputs')
 
-    with ExitStack() as stack:
-        with office(adapter) as app:
-            for path in destinations:
-                if path.exists():
+    with DesktopLock(), ExitStack() as stack:
+        expected = {path: file_state(path) for path in destinations}
+        if update:
+            if expected[target] is None:
+                raise FileNotFoundError(f'Working draft does not exist: {target}')
+            source = target
+        else:
+            for path, state in expected.items():
+                if state is not None:
                     raise FileExistsError(f'Refusing to overwrite: {path}')
-            working = staging_path(stack, target)
+        workspaces = {}
+        working = stage(stack, workspaces, target)
+        with office(adapter, acquire_lock=False) as app:
             if source:
                 shutil.copyfile(source, working)
                 doc = adapter.open_document(app, working, False)
@@ -114,18 +157,18 @@ def run_plan(adapter, plan, plan_path):
             finally:
                 adapter.close(doc)
 
-            pairs = [(working, target)]
+            pairs = []
             with document(adapter, app, working, True) as reopened:
                 state = adapter.snapshot(reopened, plan.get('snapshot', {}))
                 for path, spec in exports:
-                    temporary = staging_path(stack, path)
+                    temporary = stage(stack, workspaces, path)
                     adapter.export(reopened, spec, temporary)
                     if not temporary.is_file() or not temporary.stat().st_size:
                         raise RuntimeError(f'Office did not export a nonempty file: {path}')
                     pairs.append((temporary, path))
-        publish(pairs)
-    return {'target': str(target), 'reopened': True, 'state': state,
-            'exports': [str(path) for path, _ in exports]}
+        publish([*pairs, (working, target)], expected)
+    return {'target': str(target), 'reopened': True, 'updated': update, 'state': state,
+            'exports': [str(path) for path, _ in exports], 'seconds': round(time.perf_counter() - started, 3)}
 
 
 def cli(adapter):
@@ -133,7 +176,7 @@ def cli(adapter):
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('inspect', help='Check Python and pywin32 without launching Office')
     sub.add_parser('probe', help='Connect to the desktop application and report capabilities')
-    run = sub.add_parser('run', help='Apply a JSON plan to a new output or source copy')
+    run = sub.add_parser('run', help='Apply a JSON plan to a new output or the same working draft')
     run.add_argument('--plan', type=Path, required=True)
     snapshot = sub.add_parser('snapshot', help='Read saved state through desktop COM')
     snapshot.add_argument('--target', type=Path, required=True)

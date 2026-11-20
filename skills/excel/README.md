@@ -12,7 +12,7 @@ python skills/excel/scripts/excel.py snapshot --target (Resolve-Path runs/demo/e
 python skills/excel/scripts/check_sheet.py runs/demo/excel/summary.xlsx --sheet Summary
 ```
 
-计划为 UTF-8 JSON。必填 `schema_version: 1` 与新建的绝对 `target`，可选绝对 `source`（XLSX）或 `template`（XLTX）。`snapshot.ranges` 可指定多项 `sheet` 和 `range`，保存重开后回读实际值和公式。`exports` 中每项用绝对 `path`，PNG 另填 `sheet` 和 `chart`，PDF 可选 `sheet`。已有目标会被拒绝，成功重开并导出后发布结果。
+计划为 UTF-8 JSON。必填 `schema_version: 1` 与新建的绝对 `target`，可选绝对 `source`（XLSX）或 `template`（XLTX）。`snapshot.ranges` 可指定多项 `sheet` 和 `range`，保存重开后回读实际值和公式。`exports` 中每项用绝对 `path`，PNG 另填 `sheet` 和 `chart`，PDF 可选 `sheet`。新建目标已存在时拒绝覆盖。修订时传 `update:true` 和已有工作稿 `target`，省略 `source` 和 `template`。保存重开和导出完成后更新工作稿及指定导出。
 
 | 操作 | 字段及行为 |
 | --- | --- |
@@ -25,7 +25,7 @@ python skills/excel/scripts/check_sheet.py runs/demo/excel/summary.xlsx --sheet 
 | `table` | 用 `range` 创建名为 `name` 的原生 Excel 表格，可选 `style`、`header`。 |
 | `chart` | 在 `anchor` 创建名为 `name` 的原生图表。用 `range` 提供数据区域，设置 `kind`、`width_pt`、`height_pt`、`title`、`x_title`、`y_title`。支持 `column`、`bar`、`line`、`scatter` 和 `pie`。 |
 
-跨表汇总示例。以下为计划中的 `operations`。
+固定 CSV 汇总可使用 [可复用 Excel 流程](../../references/reusable-workflows.md#excel-csv-分组汇总)。跨表汇总示例。以下为计划中的 `operations`。
 
 ```json
 [

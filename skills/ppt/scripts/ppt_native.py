@@ -93,6 +93,11 @@ def find_unique(items, selector, *, slide=False):
 def validate_plan(plan):
     if plan.get('schema_version') != 1:
         raise ValueError('schema_version must be 1')
+    if type(plan.get('show', False)) is not bool:
+        raise ValueError('show must be a boolean')
+    if 'verify_pages' in plan and (not plan.get('reopen') or not isinstance(plan['verify_pages'], list)
+                                   or not plan['verify_pages']):
+        raise ValueError('verify_pages needs reopen and a nonempty list of slide selectors')
     target = absolute(plan['target'])
     if target.suffix.lower() not in {'.pptx', '.pptm', '.potx', '.potm'}:
         raise ValueError('Unsupported target extension')
@@ -316,11 +321,21 @@ def shape_snapshot(shape):
     return record
 
 
-def set_chart_data(chart, spec):
+def set_chart_data(chart, spec, show_window=None):
     if chart.ChartData.IsLinked:
         raise ValueError('Linked chart data is external; copy/embed it explicitly before editing')
-    chart.ChartData.Activate()
-    book = chart.ChartData.Workbook
+    try:
+        chart.ChartData.Activate()
+        book = chart.ChartData.Workbook
+    except Exception as exc:
+        if show_window is None:
+            raise
+        from pywintypes import com_error
+        if not isinstance(exc, com_error) or not show_window():
+            raise
+        # Only retry activation, before writes to the embedded workbook.
+        chart.ChartData.Activate()
+        book = chart.ChartData.Workbook
     try:
         sheet = book.Worksheets.Item(1)
         sheet.Cells.Clear()
@@ -347,6 +362,19 @@ class PowerPoint:
         self.presentation = None
         self.target = None
         self.opened_here = False
+        self.foreground_operations = []
+        self.with_window = 0
+
+    def open_target(self):
+        return self.app.Presentations.Open(str(self.target), 0, 0, self.with_window)
+
+    def show_window(self, reason):
+        if self.presentation.Windows.Count:
+            return False
+        self.app.Visible = -1
+        self.presentation.NewWindow().Activate()
+        self.foreground_operations.append(reason)
+        return True
 
     def bind(self, target, create=None):
         self.target = absolute(target)
@@ -363,11 +391,11 @@ class PowerPoint:
             if create is not None and create.get('template'):
                 shutil.copy2(absolute(create['template']), self.target)
             if self.target.is_file():
-                self.presentation = self.app.Presentations.Open(str(self.target), 0, 0, -1)
+                self.presentation = self.open_target()
             elif create is not None:
                 if self.target.suffix.lower() != '.pptx':
                     raise ValueError('Blank creation supports .pptx; other formats require a source')
-                self.presentation = self.app.Presentations.Add(-1)
+                self.presentation = self.app.Presentations.Add(self.with_window)
                 self.presentation.PageSetup.SlideWidth = create.get('width', 960)
                 self.presentation.PageSetup.SlideHeight = create.get('height', 540)
                 self.presentation.SaveAs(str(self.target), 24)
@@ -470,6 +498,8 @@ class PowerPoint:
                 paths.append(str(output))
             return {'images': paths}
         if kind == 'script':
+            if op.get('requires_window'):
+                self.show_window('script')
             context = {'app': self.app, 'presentation': pres, 'api': self, '__file__': str(absolute(op['path']))}
             exec(compile(absolute(op['path']).read_text(encoding='utf-8-sig'), op['path'], 'exec'), context)
             self.verify()
@@ -501,7 +531,7 @@ class PowerPoint:
             shape = self.shape(slide, op['shape'])
             if not shape.HasChart:
                 raise ValueError('Selected object is not a native chart')
-            set_chart_data(shape.Chart, op)
+            set_chart_data(shape.Chart, op, lambda: self.show_window(kind))
             return {'id': int(shape.Id), 'data_updated': True}
         if kind == 'table_cell':
             shape = self.shape(slide, op['shape'])
@@ -602,9 +632,11 @@ class PowerPoint:
                     if r == 1:
                         style_shape(cell, op.get('header_style', {}), cell=True)
         elif kind == 'chart':
+            # AddChart2 can fail without a presentation window, before data activation.
+            self.show_window('chart')
             shape = slide.Shapes.AddChart2(-1, op.get('type', 51), *bounds(op['box']), -1)
             self.register(slide, shape, name)
-            set_chart_data(shape.Chart, op)
+            set_chart_data(shape.Chart, op, lambda: self.show_window(kind))
         elif kind == 'group':
             members = [self.shape(slide, s) for s in op['shapes']]
             if any(int(s.Parent.SlideID) != int(slide.SlideID) for s in members):
@@ -624,9 +656,7 @@ def connect():
     import pythoncom
     import win32com.client
     pythoncom.CoInitialize()
-    app = win32com.client.Dispatch('PowerPoint.Application')
-    app.Visible = -1
-    return app
+    return win32com.client.Dispatch('PowerPoint.Application')
 
 
 def run_plan(plan, report_path, app_factory=connect):
@@ -674,7 +704,12 @@ def run_plan(plan, report_path, app_factory=connect):
         api = None
         try:
             api = PowerPoint(app_factory())
+            if plan.get('show'):
+                api.with_window = -1
+                api.app.Visible = -1
             api.bind(target, plan.get('create'))
+            if plan.get('show'):
+                api.show_window('show')
             if (plan.get('reopen') or plan.get('close')) and not api.opened_here and not plan.get('close_existing', False):
                 raise RuntimeError('Target is already open; close_existing=true explicitly permits closing only this target')
             report['office_version'] = str(api.app.Version)
@@ -692,13 +727,14 @@ def run_plan(plan, report_path, app_factory=connect):
                 if not plan.get('save', True):
                     raise ValueError('Reopen requires save=true')
                 api.presentation.Close()
-                api.presentation = api.app.Presentations.Open(str(target), 0, 0, -1)
+                api.presentation = api.open_target()
                 api.verify()
                 report['reopened'] = True
+                pages = {'pages': plan['verify_pages']} if 'verify_pages' in plan else {}
                 if 'verify_snapshot' in plan:
-                    api.execute({'op': 'snapshot', 'path': plan['verify_snapshot']})
+                    api.execute({'op': 'snapshot', 'path': plan['verify_snapshot'], **pages})
                 if 'verify_export' in plan:
-                    api.execute({'op': 'export', 'path': plan['verify_export']})
+                    api.execute({'op': 'export', 'path': plan['verify_export'], **pages})
             report['slides'] = int(api.presentation.Slides.Count)
             report['saved'] = bool(api.presentation.Saved)
             if plan.get('close', False):
@@ -710,6 +746,8 @@ def run_plan(plan, report_path, app_factory=connect):
             report.update(status='failed', error=f'{type(exc).__name__}: {exc}',
                           operation_may_have_applied=True, traceback=traceback.format_exc())
             # The named document remains open for inspection; no implicit save, retry, or rollback.
+        if api is not None and api.foreground_operations:
+            report['foreground_operations'] = api.foreground_operations
         report['seconds'] = round(time.perf_counter()-started, 4)
         if target.is_file():
             report['target_sha256'] = sha256(target.read_bytes()).hexdigest()

@@ -18,7 +18,7 @@ class ExcelComTests(unittest.TestCase):
             root = Path(folder)
             target, chart = root / 'workbook.xlsx', root / 'chart.png'
             data = root / 'data.csv'
-            data.write_text('Group,Value\n A ,2\nA,2\nB,4\nA,6\n', encoding='utf-8')
+            data.write_text('Group,Value\n A ,2\n\nA,2\nB,4\nA,6\n', encoding='utf-8')
             result = run_plan(excel_native, {
                 'schema_version': 1, 'target': str(target),
                 'snapshot': {'ranges': [
@@ -52,6 +52,17 @@ class ExcelComTests(unittest.TestCase):
             width, height = unpack('>II', image[16:24])
             self.assertGreaterEqual(width, 720)
             self.assertGreater(height, 0)
+
+            updated = run_plan(excel_native, {
+                'schema_version': 1, 'update': True, 'target': str(target),
+                'exports': [{'path': str(chart), 'sheet': 'Summary', 'chart': 'Totals'}],
+                'operations': [{'op': 'write', 'sheet': 'Data', 'start': 'B2', 'rows': [[3]]}],
+            }, root / 'update.json')
+            self.assertTrue(updated['updated'])
+            updated_sheet, = check(target, ['Summary'])['worksheets']
+            self.assertEqual(updated_sheet['formulas'][0]['cached'], '9')
+            self.assertEqual(list(root.glob('*.xlsx')), [target])
+            self.assertFalse(list(root.glob('.office-*')))
 
 
 if __name__ == '__main__':

@@ -118,7 +118,7 @@ def write(ws, start, rows, formula_mode=None):
 
 def import_csv(ws, op):
     with existing(op['source'], {'.csv'}).open(encoding=op.get('encoding', 'utf-8-sig'), newline='') as stream:
-        rows = list(csv.reader(stream, delimiter=op.get('delimiter', ',')))
+        rows = [row for row in csv.reader(stream, delimiter=op.get('delimiter', ',')) if row]
     _, width = rectangular(rows)
     number_columns = op.get('numeric_columns', [])
     if any(type(col) is not int or not 1 <= col <= width for col in number_columns):

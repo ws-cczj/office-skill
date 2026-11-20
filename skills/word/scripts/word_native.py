@@ -1,4 +1,5 @@
 """Native Word manuscript editing through the desktop object model."""
+from contextlib import contextmanager
 import re
 
 from core.office_batch import absolute, existing
@@ -231,17 +232,24 @@ def is_mathtype(shape):
     return shape.Type == 1 and shape.OLEFormat.ProgID.casefold() == MATHTYPE_PROG_ID
 
 
-def write_mathtype(app, target, text):
-    if not isinstance(text, str) or not text.strip() or any(c in text for c in '\r\n$'):
-        raise ValueError('Use one nonempty MathType TeX expression without delimiters')
-    if not all(value for key, value in capabilities(app).items() if key.startswith('mathtype_')):
-        raise RuntimeError('Install MathType 7 desktop and load its Word Commands add-in')
-    from win32com.client.dynamic import CDispatch
+@contextmanager
+def mathtype_writer(app):
+    scratch = None
 
-    if isinstance(app, CDispatch):
-        app._FlagAsMethod('Run')
-    scratch = app.Documents.Add(Visible=False)
-    try:
+    def write(target, text):
+        nonlocal scratch
+        if not isinstance(text, str) or not text.strip() or any(c in text for c in '\r\n$'):
+            raise ValueError('Use one nonempty MathType TeX expression without delimiters')
+        if scratch is None:
+            supported = capabilities(app)
+            if not (supported['mathtype_class_registered'] and supported['mathtype_commands_loaded']):
+                raise RuntimeError('Install MathType 7 desktop and load its Word Commands add-in')
+            from win32com.client.dynamic import CDispatch
+            if isinstance(app, CDispatch):
+                app._FlagAsMethod('Run')
+            # Reuse one hidden, unsaved conversion document for the entire batch.
+            scratch = app.Documents.Add(Visible=False)
+
         scratch.Content.Text = '$' + text + '$'
         scratch.Activate()
         scratch.Range(0, scratch.Content.End - 1).Select()
@@ -256,13 +264,16 @@ def write_mathtype(app, target, text):
         if shape is None or not is_mathtype(shape):
             raise RuntimeError('Word did not copy the editable MathType object')
         return shape.Range
+
+    try:
+        yield write
     finally:
-        scratch.Close(0)
+        if scratch is not None:
+            scratch.Close(0)
 
-
-def write_equation(app, target, engine, text):
+def write_equation(write_mathtype, target, engine, text):
     if engine == 'mathtype':
-        return write_mathtype(app, target, text)
+        return write_mathtype(target, text)
     if engine != 'word':
         raise ValueError('Equation engine must be word or mathtype')
     if not isinstance(text, str) or not text.strip() or any(c in text for c in '\r\n\t'):
@@ -276,7 +287,7 @@ def write_equation(app, target, engine, text):
     return result.Range
 
 
-def add_equation(app, doc, op):
+def add_equation(write_mathtype, doc, op):
     rng = paragraph(doc, op.get('style', 'equation'))
     fmt = rng.ParagraphFormat
     columns = rng.Sections.Item(1).PageSetup.TextColumns
@@ -299,10 +310,10 @@ def add_equation(app, doc, op):
     # Appending Word runs directly to an OMath end can put them inside the math zone.
     layout = insert(doc, start, '\t \t()')
     numbered_field(doc, layout.End - 1, 'equation', op['id'])
-    formula = write_equation(app, doc.Range(start + 1, start + 2), op.get('engine', 'word'), op['text'])
+    formula = write_equation(write_mathtype, doc.Range(start + 1, start + 2), op.get('engine', 'word'), op['text'])
     doc.Bookmarks.Add(bookmark('math', op['id']), formula)
 
-def replace_mathtype(app, doc, op):
+def replace_mathtype(write_mathtype, doc, op):
     label = bookmark('math', op['id']) if 'id' in op else None
     if label:
         rng = doc.Bookmarks.Item(label).Range
@@ -314,7 +325,7 @@ def replace_mathtype(app, doc, op):
         shape = doc.InlineShapes.Item(op['inline_shape'])
     if not is_mathtype(shape):
         raise ValueError('The selected inline shape is not an editable MathType object')
-    result = write_mathtype(app, shape.Range, op['text'])
+    result = write_mathtype(shape.Range, op['text'])
     if label:
         doc.Bookmarks.Add(label, result)
 
@@ -332,7 +343,7 @@ def add_labelled_paragraph(doc, op):
     numbered_field(doc, position, kind, op['id'])
 
 
-def add_paragraph(app, doc, op, pending):
+def add_paragraph(write_mathtype, doc, op, pending):
     rng = paragraph(doc, op.get('style', 'normal'))
     position = rng.Start
     math_runs = []
@@ -356,7 +367,7 @@ def add_paragraph(app, doc, op, pending):
         else:
             position = text_run(doc, position, run)
     for start, run in reversed(math_runs):
-        write_equation(app, doc.Range(start, start + 1), run.get('engine', 'word'), run['math'])
+        write_equation(write_mathtype, doc.Range(start, start + 1), run.get('engine', 'word'), run['math'])
 
 
 def format_paragraph(doc, op):
@@ -416,43 +427,44 @@ def refresh_fields(doc, toc):
 def apply(app, doc, operations):
     pending = set()
     refresh_toc = False
-    for op in operations:
-        kind = op['op']
-        if kind == 'configure':
-            configure(doc, op)
-        elif kind == 'paragraph':
-            add_paragraph(app, doc, op, pending)
-        elif kind == 'format_paragraph':
-            format_paragraph(doc, op)
-        elif kind == 'equation':
-            add_equation(app, doc, op)
-        elif kind == 'replace_mathtype':
-            replace_mathtype(app, doc, op)
-        elif kind in {'reference', 'caption'}:
-            add_labelled_paragraph(doc, op)
-        elif kind == 'figure':
-            add_figure(doc, op)
-        elif kind == 'table':
-            add_table(doc, op)
-        elif kind == 'toc':
-            doc.TablesOfContents.Add(paragraph(doc, 'normal'))
-            refresh_toc = True
-        elif kind == 'refresh_toc':
-            refresh_toc = True
-        elif kind == 'header_footer':
-            section = doc.Sections.Item(op.get('section', 1))
-            location = op['kind']
-            if location not in {'header', 'footer'}:
-                raise ValueError('Header/footer kind must be header or footer')
-            area = (section.Headers if location == 'header' else section.Footers).Item(1)
-            if section.Index > 1:
-                area.LinkToPrevious = False
-            area.Range.Text = op['text']
-            if 'align' in op:
-                area.Range.ParagraphFormat.Alignment = {'left': 0, 'center': 1, 'right': 2}[op['align']]
-        elif kind == 'page_numbers':
-            section = doc.Sections.Item(op.get('section', 1))
-            section.Footers.Item(1).PageNumbers.Add(2)
+    with mathtype_writer(app) as write_mathtype:
+        for op in operations:
+            kind = op['op']
+            if kind == 'configure':
+                configure(doc, op)
+            elif kind == 'paragraph':
+                add_paragraph(write_mathtype, doc, op, pending)
+            elif kind == 'format_paragraph':
+                format_paragraph(doc, op)
+            elif kind == 'equation':
+                add_equation(write_mathtype, doc, op)
+            elif kind == 'replace_mathtype':
+                replace_mathtype(write_mathtype, doc, op)
+            elif kind in {'reference', 'caption'}:
+                add_labelled_paragraph(doc, op)
+            elif kind == 'figure':
+                add_figure(doc, op)
+            elif kind == 'table':
+                add_table(doc, op)
+            elif kind == 'toc':
+                doc.TablesOfContents.Add(paragraph(doc, 'normal'))
+                refresh_toc = True
+            elif kind == 'refresh_toc':
+                refresh_toc = True
+            elif kind == 'header_footer':
+                section = doc.Sections.Item(op.get('section', 1))
+                location = op['kind']
+                if location not in {'header', 'footer'}:
+                    raise ValueError('Header/footer kind must be header or footer')
+                area = (section.Headers if location == 'header' else section.Footers).Item(1)
+                if section.Index > 1:
+                    area.LinkToPrevious = False
+                area.Range.Text = op['text']
+                if 'align' in op:
+                    area.Range.ParagraphFormat.Alignment = {'left': 0, 'center': 1, 'right': 2}[op['align']]
+            elif kind == 'page_numbers':
+                section = doc.Sections.Item(op.get('section', 1))
+                section.Footers.Item(1).PageNumbers.Add(2)
     missing = sorted(name for name in pending if not doc.Bookmarks.Exists(name))
     if missing:
         raise ValueError('Unresolved Word reference targets: ' + ', '.join(missing))

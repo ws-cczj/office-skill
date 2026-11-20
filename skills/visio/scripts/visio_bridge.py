@@ -104,16 +104,36 @@ def cell(shape, name, formula):
             shape.CellsU(f"{name}[{row+1}]").FormulaU = str(formula)
 
 
-def connect():
+def connect(req):
     import pywintypes
     import win32com.client
 
+    action = req['action']
+    persistent = (req.get('show') or req.get('close_after') is False
+                  or action == 'open_stencil'
+                  or (action == 'pages' and req.get('mode') == 'activate')
+                  or (action == 'apply' and not (req.get('save') or req.get('save_as')))
+                  or (action == 'page_size' and req.get('save') is False))
     try:
-        return win32com.client.GetActiveObject("Visio.Application"), "attached"
+        app = win32com.client.GetActiveObject("Visio.Application")
     except pywintypes.com_error:
+        app = None
+    if app is not None:
+        opened = any(find_document(app, path(req[key])) is not None
+                     for key in ('document', 'save_as') if req.get(key))
+        if persistent or opened or action == 'status':
+            return app, "attached"
+    if persistent:
         app = win32com.client.Dispatch("Visio.Application")
         app.Visible = True
         return app, "started"
+    try:
+        return win32com.client.DispatchEx("Visio.InvisibleApp"), "started_hidden"
+    except pywintypes.com_error:
+        # Startup failed before opening the target. Continue on a request-owned desktop instance.
+        app = win32com.client.DispatchEx("Visio.Application")
+        app.Visible = True
+        return app, "started_visible_fallback"
 
 
 def drawings(app):
@@ -240,6 +260,9 @@ def preflight(req):
             path(req['scene_output'], {'.json'})
     if req.get('detail','full') not in {'full','summary'}:raise RequestError('detail must be full or summary')
     if req.get('show') and req.get('close_after'):raise RequestError('show and close_after cannot both be true')
+    if req.get('reopen') and not (action in {'render', 'rebuild', 'save', 'layout'}
+                                 or (action == 'apply' and (req.get('save') or req.get('save_as')))):
+        raise RequestError('reopen requires an action that saves the drawing')
     if 'png_dpi' in req and not 36<=number(req['png_dpi'])<=600:raise RequestError('png_dpi must be 36–600')
     if action=='layout' and req.get('style','default') not in {'default','flowchart_tb','flowchart_lr','tree_tb','tree_lr','radial','circular'}:
         raise RequestError('Unknown layout preset')
@@ -416,13 +439,13 @@ def show_document(app,doc,page):
     page.OpenDrawWindow()  # Only if there is no existing window to reuse.
 
 
-def execute(app,req):
+def execute(app,req, *, private=False):
     """Own only documents opened by this request; preserve pre-existing user work."""
     before={d.ID for d in drawings(app)}
     visible = req.get('show',False) or (req['action']=='pages' and req.get('mode')=='activate')
     result=None
     try:
-        result=_execute(app,req)
+        result=_execute(app,req,before)
         if req.get('show') and req.get('document'):
             doc=find_document(app,path(req.get('save_as',req['document'])))
             if doc is not None:
@@ -438,15 +461,16 @@ def execute(app,req):
                          all(page.Shapes.Count==0 for page in doc.Pages))
             close=(result is None and (saved or empty_draft)) or (
                 result is not None and not visible and req.get('close_after',True) and saved)
-            if close:
+            if close or private:
                 name=doc.FullName
-                if not saved:doc.Saved=True  # Only an empty, request-owned failed drawing.
+                if not saved:
+                    doc.Saved=True  # Discard only an unsaved request-owned drawing in an isolated instance.
                 doc.Close();closed.append(name)
             else:kept.append(doc.FullName)
         if result is not None:result['lifecycle']={'closed_owned':closed,'kept_owned':kept,'existing_documents_preserved':True}
 
 
-def _execute(app, req):
+def _execute(app, req, open_before):
     action = req["action"]
     stages={};started=time.perf_counter()
     if action=='icons':return visio_extras.icons()
@@ -534,6 +558,14 @@ def _execute(app, req):
     elif action in {"save", "layout"} or req.get("save") or (action=='page_size' and req.get('save',True)):
         doc.Save()
     stages['save']=time.perf_counter()-t;t=time.perf_counter()
+    reopened = False
+    if req.get('reopen') and doc.ID not in open_before:
+        filename, page_name = doc.FullName, page.NameU
+        doc.Close()
+        doc, page = target(app, {'action': 'inspect', 'document': filename, 'page': page_name})
+        reopened = True
+        stages['reopen'] = time.perf_counter() - t
+        t = time.perf_counter()
     exported = []
     for value in req.get("exports", []):
         output = path(value, EXPORT_EXTENSIONS)
@@ -546,43 +578,55 @@ def _execute(app, req):
     stages['export']=time.perf_counter()-t;t=time.perf_counter()
     state=inspect(doc,page,req.get('detail','full'),req.get('recursive',False))
     stages['inspect']=time.perf_counter()-t
-    return {"state":state, "exports": exported,'timings':{k:round(v,6) for k,v in stages.items()}, "saved": bool(
+    return {"state":state, "exports": exported, "reopened": reopened,'timings':{k:round(v,6) for k,v in stages.items()}, "saved": bool(
         action in {"render", "save", "layout",'rebuild'} or (action=='page_size' and req.get('save',True)) or req.get("save_as") or req.get("save"))}
+
+
+def run_request(req):
+    started = time.perf_counter()
+    if req.get('action') == 'snapshot':
+        preflight(req)
+        result = vsdx_scene.snapshot(path(req['document']), req.get('recursive', True))
+        return {'ok': True, 'result': result}
+    with DesktopLock():
+        preflight(req)
+        import pythoncom
+
+        pythoncom.CoInitialize()
+        app = None
+        private = False
+        try:
+            app, connection = connect(req)
+            private = connection in {'started_hidden', 'started_visible_fallback'}
+            result = execute(app, req, private=private)
+        finally:
+            try:
+                if private:
+                    app.Quit()
+            finally:
+                app = None
+                pythoncom.CoUninitialize()
+    return {'ok': True, 'connection': connection, 'elapsed_seconds': round(time.perf_counter()-started, 3),
+            'result': result}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--request", type=Path, help="UTF-8 JSON request file")
-    source.add_argument("--action", choices=["status", "stencils",'icons'])
+    source.add_argument("--action", choices=["status", "stencils", "icons"])
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     started = time.perf_counter()
-    snapshot = False
+    req = {}
     try:
         req = json.loads(args.request.read_text(encoding="utf-8-sig")) if args.request else {"action": args.action}
-        snapshot = req.get('action') == 'snapshot'
-        if snapshot:
-            preflight(req)
-            result = vsdx_scene.snapshot(path(req['document']), req.get('recursive', True))
-            print(json.dumps({'ok': True, 'result': result}, ensure_ascii=False))
-            return 0
-        with DesktopLock():
-            preflight(req)
-            import pythoncom
-
-            pythoncom.CoInitialize()
-            try:
-                app, connection = connect()
-                result = execute(app, req)
-            finally:
-                pythoncom.CoUninitialize()
-        print(json.dumps({"ok": True, "connection": connection, "elapsed_seconds": round(time.perf_counter()-started, 3),
-                          "result": result}, ensure_ascii=False))
+        result = run_request(req)
+        print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:
         failure = {"ok": False, "error_type": type(exc).__name__, "error": str(exc)}
-        if snapshot:
+        if isinstance(req, dict) and req.get('action') == 'snapshot':
             failure['quality_verdict'] = 'not_assessed'
         else:
             failure['elapsed_seconds'] = round(time.perf_counter() - started, 3)

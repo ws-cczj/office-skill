@@ -9,7 +9,7 @@ python skills/visio/scripts/visio_bridge.py --action stencils
 python skills/visio/scripts/visio_bridge.py --request C:\work\request.json
 ```
 
-`status` 会连接正在运行的 Visio，没有实例时启动一个可见实例。它报告打开的绘图、保存状态和可见绘图窗口数量。需要本机交互桌面，不能以此保证 Windows 服务、无人登录或跨平台场景可用。
+`status` 会读取正在运行的桌面 Visio；没有实例时使用独立隐藏实例。它报告打开的绘图、保存状态和可见绘图窗口数量。需要本机交互桌面，不能以此保证 Windows 服务、无人登录或跨平台场景可用。
 
 ## 请求
 
@@ -36,7 +36,7 @@ python skills/visio/scripts/visio_bridge.py --request C:\work\request.json
 
 绘图和导出请求可附加 `exports`（PNG、SVG 或 EMF 路径数组）。多页文件的绘图、编辑和导出必须明确 `page`。`render` 默认页面为 12 × 8 英寸；宽高必须为正数。`render` 和 `save_as` 遇到已有文件会拒绝，除非 `overwrite:true`；已打开的目标不允许重新 `render`，请使用 `apply`。普通原位保存沿用已有路径。
 
-桥接默认在后台打开或创建绘图，请求结束时关闭本次打开且已保存的绘图，保留请求开始前已打开的绘图及未保存的修改。需要跨请求持有后台绘图时设置 `close_after:false`；要在界面显示结果时用 `show:true`，重复调用会复用已有窗口。`pages` 的 `activate` 模式也会显示绘图。后台编辑并落盘用 `apply` 加 `save:true`。
+普通请求使用独立的 `Visio.InvisibleApp`，隐藏实例连接失败时自动使用可见实例继续。目标已在用户的 Visio 中打开时复用已打开的目标。请求结束时清理本批拥有的独立实例与文档。 本机 Visio 16.0 新建隐藏图纸时曾短暂取得 Windows 前台焦点，隐藏实例继续完成保存与导出。需要跨请求持有后台绘图时设置 `close_after:false`；要在界面显示结果时用 `show:true`，重复调用会复用已有窗口。`pages` 的 `activate` 模式也会显示绘图。后台编辑并落盘用 `apply` 加 `save:true`。需要验收时给保存请求加 `reopen:true`，桥接会在导出前重开本批拥有的已保存图纸，实际状态见返回的 `reopened`。日常流程图见 [可复用流程](../../../references/reusable-workflows.md#visio-流程图)。
 
 有 PNG 导出时，`png_dpi` 可设 36 至 600 的有限数值（如 300）。只在导出期间生效，随后恢复 Visio 全局栅格设置。PNG 仍按 Visio 的内容范围导出；要保留空白页边，可加一块覆盖页面的底色形状。SVG 和 EMF 可用于矢量交付。
 
