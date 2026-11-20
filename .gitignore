@@ -8,6 +8,7 @@
 
 # 风格包的本机参考截图；规则和元数据仍可正常纳入版本管理
 /resources/**/local/
+/skills/ppt/resources/**/local/
 
 # 本地环境
 .env
