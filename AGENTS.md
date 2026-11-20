@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | PowerPoint | `ready` | [PPT 开发与训练](skills/ppt/AGENTS.md) |
 | Visio | `validating` | [Visio 开发与训练](skills/visio/AGENTS.md) |
-| Word | `planned` | [Word 规划](skills/word/README.md) |
-| Excel | `planned` | [Excel 规划](skills/excel/README.md) |
+| Word | `validating` | [Word COM 与稿件规范](skills/word/README.md) |
+| Excel | `validating` | [Excel COM 与工作簿规范](skills/excel/README.md) |
 
 `ready` 已具备正式工作流。 `validating` 已有实现并继续验证。 `draft` 为可评审规则。 `planned` 为职责与实现规划。
